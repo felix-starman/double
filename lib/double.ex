@@ -6,7 +6,7 @@ defmodule Double do
   give you everything you would normally need a complex mocking tool for.
   """
 
-  alias Double.{FuncList, Registry, SpyHelper}
+  alias Double.{FuncList, Registry}
   use GenServer
 
   @default_options [verify: true, send_stubbed_module: false]
@@ -19,6 +19,79 @@ defmodule Double do
              | {atom, String.t()}}
   @type double_option :: {:verify, true | false}
 
+  # TODO - document the SHIT out of this
+  defmacro defmock(mock_name, for: source) do
+    mock_name = Macro.expand(mock_name, __CALLER__)
+    source = Macro.expand(source, __CALLER__)
+
+    unless Code.ensure_compiled(source) == {:module, source} do
+      raise(ArgumentError, "module #{inspect(source)} either does not exist or is not loaded")
+    end
+
+    func_defs =
+      for {func_name, arity} <- source.__info__(:functions) do
+        args = Macro.generate_arguments(arity, source)
+
+        quote do
+          def unquote(func_name)(unquote_splicing(args)) do
+            IO.puts("Hello from #{unquote(func_name)}")
+
+            Double.Listener.record(
+              {unquote(mock_name), unquote(func_name), [unquote_splicing(args)]}
+            )
+
+            # TODO - resume here
+            # DoubleAgent.Handoff.call(
+            #   {unquote(source), unquote(func_name), [unquote_splicing(args)]}
+            # )
+
+            apply(unquote(source), unquote(func_name), [unquote_splicing(args)])
+          end
+        end
+      end
+
+    quote do
+      defmodule unquote(mock_name) do
+        unquote(func_defs)
+      end
+    end
+  end
+
+  defmacro defshim(alias, opts \\ []) do
+    source = Keyword.fetch!(opts, :for)
+
+    env = __CALLER__
+    expanded = Macro.expand(alias, env)
+    source = Macro.expand(source, env)
+
+    unless Code.ensure_compiled(source) == {:module, source} do
+      raise(ArgumentError, "module #{inspect(source)} either does not exist or is not loaded")
+    end
+
+    func_defs =
+      for {func_name, arity} <- source.__info__(:functions) do
+        args = Macro.generate_arguments(arity, source)
+
+        quote do
+          def unquote(func_name)(unquote_splicing(args)) do
+            IO.puts("Hello from #{unquote(func_name)}")
+
+            __handle_shim_call__(
+              {unquote(expanded), unquote(func_name), [unquote_splicing(args)]}
+            )
+          end
+        end
+      end
+
+    quote do
+      defmodule unquote(expanded) do
+        use Double.Shim, for: unquote(source)
+
+        unquote(func_defs)
+      end
+    end
+  end
+
   def spy(target) do
     target.module_info(:functions)
     |> Enum.reject(fn {k, _} ->
@@ -27,7 +100,7 @@ defmodule Double do
         String.starts_with?("#{k}", "-")
     end)
     |> Enum.reduce(stub(target), fn {func, arity}, dbl ->
-      args = SpyHelper.create_args(target, arity)
+      args = Macro.generate_arguments(arity, target)
 
       {f, _} =
         quote do
@@ -72,16 +145,21 @@ defmodule Double do
   Same as double/0 but can return structs and modules too
   """
   def double(source, opts \\ @default_options) do
+    opts = Enum.into(opts, %{})
     test_pid = self()
     {:ok, pid} = GenServer.start_link(__MODULE__, [])
 
     double_id =
-      case is_atom(source) do
-        true ->
+      case {is_atom(source), Map.has_key?(opts, :name)} do
+        {true, true} ->
+          # TODO - determine if there are any atoms we don't want to attempt to redefine
+          opts[:name] |> Atom.to_string()
+
+        {true, _} ->
           source_name = source |> Atom.to_string() |> String.split(".") |> List.last()
           "#{source_name}Double#{:erlang.unique_integer([:positive])}"
 
-        false ->
+        {false, _} ->
           :sha
           |> :crypto.hash(inspect(pid))
           |> Base.encode16()
@@ -157,7 +235,7 @@ defmodule Double do
   defp do_allow(dbl, function_name, func) do
     double_id = if is_atom(dbl), do: Atom.to_string(dbl), else: dbl._double_id
     pid = Registry.whereis_double(double_id)
-    GenServer.call(pid, {:allow, dbl, function_name, func})
+    GenServer.call(pid, {:allow, dbl, function_name, func}, :infinity)
   end
 
   defp verify_mod_double(dbl, function_name, func) when is_atom(dbl) do
@@ -260,8 +338,15 @@ defmodule Double do
     opts = Registry.opts_for("#{mod}")
     stubbed_module = Registry.source_for("#{mod}")
 
+    mod_name =
+      if "Elixir." <> _ = Atom.to_string(mod) do
+        ~s(:"#{mod}")
+      else
+        ~s(:#{mod})
+      end
+
     code = """
-    defmodule :#{mod} do
+    defmodule #{mod_name} do
     """
 
     code =

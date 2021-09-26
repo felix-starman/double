@@ -6,7 +6,7 @@ defmodule Double.Mixfile do
     [
       app: :double,
       version: @version,
-      elixir: "~> 1.3",
+      elixir: "~> 1.5",
       build_embedded: Mix.env() == :prod,
       start_permanent: Mix.env() == :prod,
       description: description(),
@@ -29,7 +29,8 @@ defmodule Double.Mixfile do
   def application do
     [
       applications: [:logger],
-      mod: {Double.Application, []}
+      mod: {Double.Application, []},
+      extra_applications: [:crypto]
     ]
   end
 
@@ -49,7 +50,8 @@ defmodule Double.Mixfile do
     [
       {:ex_doc, ">= 0.0.0", only: :dev},
       {:dialyxir, "~> 0.4", only: [:dev], runtime: false},
-      {:credo, "~> 0.7.2", only: [:dev], runtime: false}
+      {:credo, "~> 0.7.2", only: [:dev], runtime: false},
+      {:mix_test_watch, "~> 1.0", only: [:dev], runtime: false}
     ]
   end
 

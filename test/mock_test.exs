@@ -7,6 +7,9 @@ defmodule MockTest do
   # import FunctionSyntaxTests
   import Double
 
+  @moduletag :skip
+  # TODO - remove/rework all this
+
   setup_all do
     %{
       dbl: TestMock,
@@ -40,7 +43,7 @@ defmodule MockTest do
     # end
 
     test "can be stubbed" do
-      mock = defmock(MockMod, for: TestModule)
+      _mock = defmock(MockMod, for: TestModule)
       assert stub(MockMod, :process, fn 1, 2, 3 -> :from_mock end)
       assert stub(MockMod, :process, fn 3, 2, 1 -> :from_mock end)
 

@@ -9,6 +9,8 @@ defmodule Double do
   alias Double.{FuncList, Registry}
   use GenServer
 
+  defdelegate assert_called(mfargs), to: Double.Assertions
+
   @default_options [verify: true, send_stubbed_module: false]
 
   @type allow_option ::
@@ -19,7 +21,7 @@ defmodule Double do
              | {atom, String.t()}}
   @type double_option :: {:verify, true | false}
 
-  # TODO - document the SHIT out of this
+  # TODO - rework or remove this
   defmacro defmock(mock_name, for: source) do
     mock_name = Macro.expand(mock_name, __CALLER__)
     source = Macro.expand(source, __CALLER__)
@@ -29,7 +31,7 @@ defmodule Double do
     end
 
     func_defs =
-      for {func_name, arity} <- source.__info__(:functions) do
+      for {func_name, arity} <- nonprotected_functions(source) do
         args = Macro.generate_arguments(arity, source)
 
         quote do
@@ -40,7 +42,6 @@ defmodule Double do
               {unquote(mock_name), unquote(func_name), [unquote_splicing(args)]}
             )
 
-            # TODO - resume here
             # DoubleAgent.Handoff.call(
             #   {unquote(source), unquote(func_name), [unquote_splicing(args)]}
             # )
@@ -57,6 +58,7 @@ defmodule Double do
     end
   end
 
+  # TODO - decide what to do with this
   defmacro defshim(alias, opts \\ []) do
     source = Keyword.fetch!(opts, :for)
 
@@ -68,37 +70,46 @@ defmodule Double do
       raise(ArgumentError, "module #{inspect(source)} either does not exist or is not loaded")
     end
 
-    func_defs =
-      for {func_name, arity} <- source.__info__(:functions) do
-        args = Macro.generate_arguments(arity, source)
+    func_defs = generate_function_defs(expanded, source)
 
-        quote do
-          def unquote(func_name)(unquote_splicing(args)) do
-            IO.puts("Hello from #{unquote(func_name)}")
-
-            __handle_shim_call__(
-              {unquote(expanded), unquote(func_name), [unquote_splicing(args)]}
-            )
-          end
-        end
+    quoted_use =
+      quote do
+        use Double.Shim, for: unquote(source)
       end
 
-    quote do
-      defmodule unquote(expanded) do
-        use Double.Shim, for: unquote(source)
+    Module.create(expanded, [quoted_use | func_defs], Macro.Env.location(__ENV__))
+  end
 
-        unquote(func_defs)
+  defp generate_function_defs(name, source, other_funcs \\ []) do
+    funcs = Enum.uniq(nonprotected_functions(source) ++ other_funcs)
+
+    for {func_name, arity} <- funcs do
+      generate_function_def(name, func_name, arity)
+    end
+  end
+
+  defp generate_function_def(mod, func_name, arity) do
+    args = Macro.generate_arguments(arity, mod)
+
+    quote do
+      def unquote(func_name)(unquote_splicing(args)) do
+        __handle_double_call__({unquote(mod), unquote(func_name), [unquote_splicing(args)]})
       end
     end
   end
 
-  def spy(target) do
-    target.module_info(:functions)
+  defp nonprotected_functions(mod) do
+    mod.module_info(:functions)
     |> Enum.reject(fn {k, _} ->
       [:__info__, :module_info] |> Enum.member?(k) ||
         String.starts_with?("#{k}", "_") ||
         String.starts_with?("#{k}", "-")
     end)
+  end
+
+  def spy(target) do
+    target
+    |> nonprotected_functions()
     |> Enum.reduce(stub(target), fn {func, arity}, dbl ->
       args = Macro.generate_arguments(arity, target)
 
@@ -156,8 +167,14 @@ defmodule Double do
           opts[:name] |> Atom.to_string()
 
         {true, _} ->
-          source_name = source |> Atom.to_string() |> String.split(".") |> List.last()
-          "#{source_name}Double#{:erlang.unique_integer([:positive])}"
+          source_name =
+            source
+            |> Atom.to_string()
+            |> String.split(".")
+            |> List.last()
+
+          Module.concat(source_name, "Double#{:erlang.unique_integer([:positive])}")
+          |> Atom.to_string()
 
         {false, _} ->
           :sha
@@ -279,7 +296,7 @@ defmodule Double do
   defp verify_mod_double(dbl, _, _), do: dbl
 
   defp verify_struct_double(%{__struct__: _} = dbl, function_name) do
-    if Enum.member?(Map.keys(dbl), function_name) do
+    if Map.has_key?(dbl, function_name) do
       dbl
     else
       struct_key_error(dbl, function_name)
@@ -328,43 +345,31 @@ defmodule Double do
   end
 
   defp stub_module(mod, state) do
-    funcs =
+    func_names_and_arities =
       state.func_list
       |> FuncList.list()
-      |> Enum.uniq_by(fn {function_name, func} ->
-        {function_name, arity(func)}
-      end)
+      |> MapSet.new(fn {func_name, func} -> {func_name, arity(func)} end)
+      |> MapSet.to_list()
 
-    opts = Registry.opts_for("#{mod}")
     stubbed_module = Registry.source_for("#{mod}")
 
-    mod_name =
-      if "Elixir." <> _ = Atom.to_string(mod) do
-        ~s(:"#{mod}")
-      else
-        ~s(:#{mod})
+    opts =
+      Registry.opts_for("#{mod}")
+      |> Map.put(:for, stubbed_module)
+
+    func_defs = generate_function_defs(mod, stubbed_module, func_names_and_arities)
+
+    quoted_use =
+      quote do
+        use Double.Stub, unquote(opts)
       end
 
-    code = """
-    defmodule #{mod_name} do
-    """
+    contents = [quoted_use, maybe_quoted_kernel_import(func_names_and_arities)] ++ func_defs
 
-    code =
-      Enum.reduce(funcs, code, fn {function_name, func}, acc ->
-        {signature, message} =
-          function_parts(function_name, func, {opts[:send_stubbed_module], stubbed_module})
-
-        acc <>
-          """
-            #{unimport_if_needed(function_name, func)}
-            def #{function_name}(#{signature}) do
-              #{function_body(mod, message, function_name, signature)}
-            end
-          """
-      end)
-
-    code = code <> "\nend"
-    Double.Eval.eval(code)
+    %{ignore_module_conflict: ignore_module_conflict} = Code.compiler_options()
+    Code.compiler_options(ignore_module_conflict: true)
+    Module.create(mod, contents, Macro.Env.location(__ENV__))
+    Code.compiler_options(ignore_module_conflict: ignore_module_conflict)
   end
 
   defp stub_function(double_id, function_name, func) do
@@ -412,9 +417,13 @@ defmodule Double do
     {signature, message}
   end
 
-  defp unimport_if_needed(function_name, func) do
-    if Enum.member?(Kernel.__info__(:functions), {function_name, func_arity = arity(func)}) do
-      "import Kernel, except: [#{function_name}: #{func_arity}]"
+  defp maybe_quoted_kernel_import(func_names_and_arities) do
+    excepts = func_names_and_arities -- Kernel.__info__(:functions)
+
+    if length(excepts) > 0 do
+      quote do
+        import Kernel, except: unquote(Macro.escape(excepts))
+      end
     end
   end
 

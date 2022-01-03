@@ -169,12 +169,14 @@ defmodule StubTest do
 
   test "module names include source name" do
     dbl = stub(TestModule)
-    assert "TestModuleDouble" <> _ = Atom.to_string(dbl)
+
+    assert ["TestModule", "Double" <> _] = Module.split(dbl)
+    assert ["TestModule", "Double" <> _] = Atom.to_string(dbl) |> Module.split()
   end
 
   test "functions are verified against target module" do
     assert_raise VerifyingDoubleError,
-                 ~r/The function 'non_existent_function\/1' is not defined in :TestModuleDouble/,
+                 ~r/The function 'non_existent_function\/1' is not defined in TestModule.Double/,
                  fn ->
                    stub(TestModule, :non_existent_function, fn _ -> 1 end)
                  end
@@ -196,7 +198,7 @@ defmodule StubTest do
 
   test "verifies invalid behaviour doubles" do
     assert_raise VerifyingDoubleError,
-                 ~r/The function 'non_existent_function\/1' is not defined in :TestBehaviourDouble/,
+                 ~r/The function 'non_existent_function\/1' is not defined in TestBehaviour.Double/,
                  fn ->
                    stub(TestBehaviour, :non_existent_function, fn _ -> :ok end)
                  end

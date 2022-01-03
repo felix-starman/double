@@ -136,12 +136,13 @@ defmodule DoubleTest do
     function_syntax_behavior()
 
     test "module names include source name", %{dbl: dbl} do
-      assert "TestModuleDouble" <> _ = Atom.to_string(dbl)
+      assert ["TestModule", "Double" <> _] = Module.split(dbl)
+      assert ["TestModule", "Double" <> _] = Atom.to_string(dbl) |> Module.split()
     end
 
     test "module doubles are strict by default", %{dbl: dbl} do
       assert_raise VerifyingDoubleError,
-                   ~r/The function 'non_existent_function\/1' is not defined in :TestModuleDouble/,
+                   ~r/The function 'non_existent_function\/1' is not defined in TestModule.Double/,
                    fn ->
                      allow(dbl, :non_existent_function, with: {:any, 1}, returns: 1)
                    end
@@ -182,7 +183,7 @@ defmodule DoubleTest do
       dbl = TestBehaviour |> double
 
       assert_raise VerifyingDoubleError,
-                   ~r/The function 'non_existent_function\/1' is not defined in :TestBehaviourDouble/,
+                   ~r/The function 'non_existent_function\/1' is not defined in TestBehaviour.Double/,
                    fn ->
                      allow(dbl, :non_existent_function, fn _ -> :ok end)
                    end

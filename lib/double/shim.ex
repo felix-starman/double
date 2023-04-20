@@ -12,7 +12,8 @@ defmodule Double.Shim do
       def __handle_double_call__({shim_mod, func_name, args} = mfargs) do
         # TODO - determine if there's a better name for this
         # opts controlling behaviour like this feels weird
-        Double.Agent.record(mfargs, call_source: true)
+        # Double.Agent.record(mfargs, call_source: true)
+        Double.Agent.record(mfargs)
       end
 
       defoverridable(__handle_double_call__: 1)

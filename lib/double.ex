@@ -144,7 +144,12 @@ defmodule Double do
     |> do_allow(function_name, func)
   end
 
-  @spec double :: map
+  @type map_double() :: %{
+          required(:_double_id) => String.t(),
+          optional(any()) => any()
+        }
+
+  @spec double() :: map_double()
   @spec double(struct, [double_option]) :: struct
   @spec double(atom, [double_option]) :: atom
   @doc """

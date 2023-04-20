@@ -84,10 +84,6 @@ defmodule Double.Agent do
     end
   end
 
-  def handle_continue({:call_source, _mfargs}, state) do
-    {:noreply, state}
-  end
-
   def handle_call(
         {_mod, func_name, args} = mfargs,
         {from_pid, _tag},
@@ -97,6 +93,10 @@ defmodule Double.Agent do
     result = apply(source, func_name, args)
 
     {:reply, result, %{state | calls: [{from_pid, mfargs} | calls]}}
+  end
+
+  def handle_continue({:call_source, _mfargs}, state) do
+    {:noreply, state}
   end
 
   def handle_call(:list_calls, _from, state) do

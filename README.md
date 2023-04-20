@@ -23,13 +23,19 @@ ExUnit.start
 Application.ensure_all_started(:double)
 ```
 
-- [Intro](#modulebehaviour-doubles)
-- Stubs
+- [Double](#double)
+  - [Installation](#installation)
+  - [Usage](#usage)
+    - [Module/Behaviour Doubles](#modulebehaviour-doubles)
+  - [Features](#features)
     - [Basics](#basics)
-    - [Advanced Return Values](#different-return-values-for-different-arguments)
+    - [Different return values for different arguments](#different-return-values-for-different-arguments)
+    - [Multiple calls returning different values](#multiple-calls-returning-different-values)
     - [Exceptions](#exceptions)
-    - [Verifying Calls](#verifying-calls)
-- [Spies](#spies)
+    - [Verifying calls](#verifying-calls)
+    - [Module Verification](#module-verification)
+    - [Clearing Stubs](#clearing-stubs)
+    - [Spies](#spies)
 
 ### Module/Behaviour Doubles
 Double creates a fake module based off of a behaviour or module.
@@ -151,7 +157,7 @@ dbl |> clear() # clear all functions
 Everything that works on stubs should pretty much work on spies, but the spy just automatically defaults to using the implementation of the module you're spying.
 
 Say you have already written a stub of some kind for the `IO` module:
-```
+```elixir
 defmodule IOStub do
   def write(filename, content) do
     "really bad example of writing a file"
@@ -159,7 +165,7 @@ defmodule IOStub do
 end
 ```
 Now in your tests you can utilize this stub and "attach" spying behavior like so:
-```
+```elixir
 test "spying on modules works" do
   # use spy/1 instead of stub
   spy = spy(IOStub)
@@ -175,4 +181,3 @@ test "spying on modules works" do
   assert spy.write("anything", "anything") == :ok
 end
 ```
-
